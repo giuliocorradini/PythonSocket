@@ -25,6 +25,7 @@ import threading
 import logging
 
 quit_on_idle = threading.Event()
+shutdown = threading.Event()
 
 class ThreadedRequestHandler(threading.Thread):
 
@@ -33,6 +34,7 @@ class ThreadedRequestHandler(threading.Thread):
     def __init__(self, incoming_conn):
         super().__init__(name="Client {}".format(ThreadedRequestHandler._count))
         self.conn: socket.socket = incoming_conn
+        self.conn.setblocking(False)
 
         ThreadedRequestHandler._count += 1
 
@@ -56,17 +58,21 @@ class ThreadedRequestHandler(threading.Thread):
 
     def run(self) -> None:
         while True:
-            data = self.conn.recv(2)    #command + LF
-            if not data: break
-
-            command = data.decode("ascii")
             try:
-                response = self.protocolCommandHandler(command[0])
-            except ValueError:
-                logging.error("Client {} sent an invalid command {}".format(self.conn.getpeername(), data))
-                response = "Invalid command"
-            finally:
-                self.conn.sendall(bytes(response, 'ascii'))
+                data = self.conn.recv(2)    #command + LF
+                if not data: break
+
+                command = data.decode("ascii")
+                try:
+                    response = self.protocolCommandHandler(command[0])
+                except ValueError:
+                    logging.error("Client {} sent an invalid command {}".format(self.conn.getpeername(), data))
+                    response = "Invalid command"
+                finally:
+                    self.conn.sendall(bytes(response, 'ascii'))
+
+            except socket.error:
+                if shutdown.is_set(): break
 
         self.conn.close()
 
@@ -85,11 +91,12 @@ def main():
                 t = ThreadedRequestHandler(conn)
                 t.start()
 
+        except KeyboardInterrupt:
+            shutdown.set()
 
-        finally:
-            for t in threading.enumerate():
-                if t != threading.current_thread():
-                    t.join()
+        for t in threading.enumerate():
+            if t != threading.current_thread():
+                t.join()
 
 
 if __name__ == '__main__':
