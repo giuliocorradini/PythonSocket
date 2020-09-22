@@ -19,17 +19,21 @@ quitting_on_idle = threading.Event()
 
 class CustomProtocolRequestHandler(socketserver.BaseRequestHandler):
     def handle(self):
-        while True:
-            data = self.request.recv(2)
-            if not data: break
-            command = data.decode('ascii')
-            try:
+        try:
+            while True:
+                data = self.request.recv(2)
+                if not data: break
+
+                command = data.decode('ascii')
+
                 response = self.commandDecoder(command[0])
-            except ValueError as e:
-                logging.error("Client {} sent unknown command: {}".format(self.client_address, data))
-                response = str(e)
-            finally:
                 self.request.sendall(response.encode('ascii'))
+        except ValueError as e:
+            logging.error("Client {} sent unknown command: {}".format(self.client_address, data))
+            self.request.sendall("Command not recognized")
+        except ConnectionResetError:
+            logging.info("Client {} disconnected".format(self.client_address))
+
 
 
     def commandDecoder(self, command: str):
@@ -65,6 +69,7 @@ def main(host, port):
         t.start()
         logging.info("Started a threaded TCP server on {}:{}".format(host, port))
         server.serve_forever()
+        logging.info("shutting down")
 
 if __name__ == '__main__':
     logging.basicConfig(format="%(asctime)s\t%(levelname)s\t%(threadName)s\t%(message)s", level=logging.INFO)
