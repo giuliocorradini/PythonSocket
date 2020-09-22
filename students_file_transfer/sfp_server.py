@@ -19,8 +19,9 @@ from collections import defaultdict
 import select
 import threading
 from typing import Dict
+import queue
 
-__author__ == 'Giulio Corradini'
+__author__ = 'Giulio Corradini'
 
 class SFPProtocolResponder:
     MESSAGE_PROCESSING_COMPLETE = 0
@@ -45,37 +46,46 @@ class SFPProtocolResponder:
         return
 
 
-class ClientConnection(threading.Thread):
+class ClientHandler(threading.Thread):
     CLIENT_NUMBER = 0
 
-    def __init__(self, conn: socket.socket):
-        self.name = "Client{}".format(ClientConnection.CLIENT_NUMBER)
-        ClientConnection.CLIENT_NUMBER += 1
+    def __init__(self):
+        super().__init__(name="Client{}".format(ClientHandler.CLIENT_NUMBER))
+        ClientHandler.CLIENT_NUMBER += 1
 
-        self.conn = conn
-        self.conn.setblocking(False)
-
-        #L3 to L4 IPC
-        self.buffer_lock = threading.Lock()
         self.buffer = bytearray()
-
-        #L4 SAP
-        self.new_data_available = threading.Condition()
-        self.protocol_session = SFPProtocolResponder(self.buffer, self.buffer_lock)
-
-    def recv(self, bufsize, flags=0) -> bytes:
-        data = self.conn.recv(bufsize, flags)
-        with self.new_data_available:
-            self.buffer += data
-            self.new_data_available.notify()
-
-        return data
-
-    def send(self, bytes: bytes, flags=0) -> int:
-        return self.conn.send(bytes, flags)
+        self.new_data_condition = threading.Condition()
+        self.connection_closed = threading.Event()
+        self.response_queue = queue.SimpleQueue()
 
     def run(self):
         while True:
+            with self.new_data_condition:
+                self.new_data_condition.wait()
+                response = self.decodeProtocol()
+                self.response_queue.put(response)
+
+
+    def feedBuffer(self, data: bytes):
+        with self.new_data_condition:
+            self.buffer += data
+            self.new_data_condition.notify()
+
+    def getResponse(self) -> bytes:
+        pass
+
+    def decodeProtocol(self):
+        '''
+        Decodes a message from the buffer. The responder is stateful, every
+        thread should istantiate its own.
+        :param ingoing: socket ingoing buffer as bytearray
+        :return: 0 is a full message has been processed
+        1 if the incoming message is incomplete. The lower layer may call recv
+        Remaining bytes to request to process current message
+        '''
+        ret = bytes(self.buffer)
+        self.buffer.clear()
+        return ret
 
 
 
@@ -89,32 +99,50 @@ def main(host, port):
     '''
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as frontdesk_sock:
-        s.bind((host, port))
-        s.listen(5)
-        s.setblocking(False)
+        frontdesk_sock.bind((host, port))
+        frontdesk_sock.listen(5)
+        frontdesk_sock.setblocking(False)
 
-        active_socks = [s]
-        clients: Dict[socket.socket, ClientConnection] = {}
+        active_socks = [frontdesk_sock]
+        clients: Dict[socket.socket, ClientHandler] = {}
 
-        while not shutdown.is_set():
-            readable, writable, exceptions = select.select(active_socks, None, active_socks, timeout=10)
+        while True:
+            readable, writable, exceptions = select.select(active_socks, active_socks, active_socks, 10)
             for sock in readable:
 
                 if sock is frontdesk_sock:
                     conn, addr = sock.accept()
-                    cl = ClientConnection(conn)
-                    clients[conn] = nc
+                    conn.setblocking(False)
                     active_socks.append(conn)
+                    cl = ClientHandler()
+                    clients[conn] = cl
+                    cl.start()
+                    logging.info("New {} connected from {}".format(cl.name, addr))
+
 
                 else:
                     cl = clients.get(sock)
-                    cl.recv(4096)
+                    if cl:
+                        data = sock.recv(4096)
+                        if not data:
+                            logging.info("Client {} has closed the connection".format(cl.name))
+                            sock.close()
+                            cl.connection_closed.set()
+                            cl.join()
+                        else:
+                            cl.feedBuffer(data)
+
 
             for sock in writable:
-                pass
+                cl = clients.get(sock)
+                if cl:
+                    if not cl.response_queue.empty():
+                        sock.sendall(cl.response_queue.get())
 
             for sock in exceptions:
                 pass
+
+        logging.info("Closing")
 
 
 
@@ -125,7 +153,7 @@ if __name__ == '__main__':
     logging.basicConfig(format="%(asctime)s\t%(levelname)s\t%(threadName)s\t%(message)s", level=logging.INFO)
     parser = argparse.ArgumentParser()
     parser.add_argument("--address", "-a", default='', required=False, metavar="address")
-    parser.add_argument("--port", "-p", type=int, default=9999, required=False, metavar="port")
+    parser.add_argument("--port", "-p", type=int, default=9998, required=False, metavar="port")
 
     args = parser.parse_args(sys.argv[1:])
     main(args.address, args.port)
