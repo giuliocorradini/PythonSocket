@@ -71,9 +71,15 @@ class ThreadedRequestHandler(threading.Thread):
                 finally:
                     self.conn.sendall(bytes(response, 'ascii'))
 
-            except socket.error:
+            except BlockingIOError:
                 if shutdown.is_set(): break
 
+            except ConnectionResetError:
+                #Client disconnects    client-/->server
+                logging.info("Client {} disconnected".format(self.conn.getpeername()))
+                break
+
+        #Close connection from sock->server
         self.conn.close()
 
 
@@ -81,24 +87,31 @@ def main():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(('', 9999))
         s.listen(5)
+        s.setblocking(False)
 
         logging.info("Opened a socket")
 
-        try:
-            while not quit_on_idle.is_set():
+        while not shutdown.is_set():
+            try:
                 conn, addr = s.accept()
                 logging.info("Accepted connection request from {}".format(addr))
                 t = ThreadedRequestHandler(conn)
                 t.start()
 
-        except KeyboardInterrupt:
-            shutdown.set()
+            except BlockingIOError:
+                if quit_on_idle.is_set(): break
 
+            except KeyboardInterrupt:
+                shutdown.set()
+
+        logging.warning("Started shutdown procedure")
         for t in threading.enumerate():
             if t != threading.current_thread():
                 t.join()
 
+        logging.debug("Quit")
+
 
 if __name__ == '__main__':
-    logging.basicConfig(format="%(asctime)s\t%(levelname)s\t%(threadName)s\t%(message)s", level=logging.INFO)
+    logging.basicConfig(format="%(asctime)s\t%(levelname)s\t%(threadName)s\t%(message)s", level=logging.DEBUG)
     main()
