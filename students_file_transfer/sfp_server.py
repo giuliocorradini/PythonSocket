@@ -78,7 +78,6 @@ class ClientHandler(threading.Thread):
         '''
         Decodes a message from the buffer. The responder is stateful, every
         thread should istantiate its own.
-        :param ingoing: socket ingoing buffer as bytearray
         :return: 0 is a full message has been processed
         1 if the incoming message is incomplete. The lower layer may call recv
         Remaining bytes to request to process current message
