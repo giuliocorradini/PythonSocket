@@ -48,7 +48,7 @@ class SFPClientHandler(threading.Thread, socket.socket):
 
 
             command = self.consumeBuffer( self.readUntil(b'\n') )\
-                        .decode('utf-8')\
+                        .decode('utf-8')[:-1]\
                         .split(' ', 3)
 
             # Parse commands
@@ -78,8 +78,15 @@ class SFPClientHandler(threading.Thread, socket.socket):
                 pass
 
             elif command[0] == 'Q':
+                self.sendall(b'GOODBYE\n')
                 self.close()
+                logging.info("Client has notified disconnection")
                 break
+
+            else:
+                self.sendall(b'INVALID\n')
+
+        logging.info("Finished")
 
 
     #   Utility functions for socket buffer management

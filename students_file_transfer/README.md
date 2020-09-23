@@ -74,4 +74,4 @@ new line character `LF` or utf-8/ASCII `0x0a`.
 | D    | Download file | File name *space*           | `NOTFOUND` if file doesn't exists<br>`File size` *space* `File name` if file exists |
 | L    | List files    |                             | Comma-separated list of file in student's disk space                                |
 | H    | Show help     |                             | Help information about commands<br><br>Double `LF` terminated                       |
-| Q    | Exit          |                             | *Close the TCP connection and quits*                                                |
+| Q    | Exit          |                             | GOOBYE *then close the TCP connection and quits*                                    |
