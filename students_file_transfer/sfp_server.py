@@ -63,7 +63,7 @@ class SFPClientHandler(threading.Thread, socket.socket):
                     with open(os.path.join(self.working_directory, filename), 'bw') as fd:
                         recv_size = 0
                         while recv_size < filesize:
-                            self.buffer = self.conn.recv(4096)
+                            self.buffer = self.recv(4096)
                             recv_size = len(self.buffer)
 
                         fd.write(self.buffer)
@@ -98,7 +98,7 @@ class SFPClientHandler(threading.Thread, socket.socket):
         '''
         str_end = -1
         while str_end == -1:
-            self.buffer += self.conn.recv(4096)
+            self.buffer += self.recv(4096)
             str_end = self.buffer.find(b'\n')
 
         return str_end
@@ -131,6 +131,7 @@ class SFPClientHandler(threading.Thread, socket.socket):
         if not data:
             self.close()
             logging.warning("{} disconnected".format(self.name))
+            raise socket.error()
         return data
 
 
