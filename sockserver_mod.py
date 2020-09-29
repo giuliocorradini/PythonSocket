@@ -19,12 +19,15 @@ quitting_on_idle = threading.Event()
 
 class CustomProtocolRequestHandler(socketserver.BaseRequestHandler):
     def handle(self):
+        buffer = bytearray()
         try:
             while True:
-                data = self.request.recv(2)
+                data = self.request.recv(1024)
                 if not data: break
+                buffer += data
 
-                command = data.decode('ascii')
+                command = buffer[:1].decode("ascii")
+                del buffer[:2]
 
                 response = self.commandDecoder(command[0])
                 self.request.sendall(response.encode('ascii'))
