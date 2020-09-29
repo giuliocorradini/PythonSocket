@@ -52,7 +52,7 @@ c.  The server sends the file as a RAW byte stream of lenght *file_size*.
 
 #### Text commands
 
-4.  Server responds to text-only commands with a `\n` terminated string with the response.
+4.  Server responds to text-only commands with a `\n\n` terminated string with the response.
 
 5. Either client or server close the connection from their side.
     *NB. The client should issue a `Q` command first to gracefully disconnect.*
