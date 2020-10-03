@@ -8,6 +8,7 @@ Protocol is defined in README.md of this directory.
 '''
 
 import socket
+import socketserver
 import os
 import glob
 import logging
@@ -19,75 +20,120 @@ import datetime as dt
 __author__ = 'Giulio Corradini'
 
 
-class SFPClientHandler(threading.Thread, socket.socket):
+class SFPClientHandler(socketserver.BaseRequestHandler, socket.socket):
     CLIENT_NUMBER = 0
 
-    def __init__(self, conn: socket.socket):
-        threading.Thread.__init__(self, name="Client{}".format(SFPClientHandler.CLIENT_NUMBER))
-        socket.socket.__init__(self, fileno=conn.fileno())
+    def __init__(self, request, client_address, server):
+        socket.socket.__init__(self, fileno=request.fileno())
         SFPClientHandler.CLIENT_NUMBER += 1
 
         self.buffer = bytearray()
-        self.conn = conn
         self.user: str = None
         self.working_directory: str = None
 
-    def run(self):
-        while True:
+        socketserver.BaseRequestHandler.__init__(self, request, client_address, server)
 
-            if self.user == None:   #Read authentication string
-                logging.debug("User requires auth".format(self.name))
-                auth_str_end = self.readUntil(b'\n')
-                self.user = self.consumeBuffer(auth_str_end).decode('utf-8').rstrip('\n')
+    def handle(self) -> None:
+        try:
+            while True:
+                if self.user == None:   #Read authentication string
+                    logging.debug("User requests auth")
+                    auth_str_end = self.readUntil(b'\n')
+                    self.user = self.consumeBuffer(auth_str_end).decode('utf-8').rstrip('\n')
 
-                self.working_directory = dt.datetime.today().strftime("%Y%m%d") + self.user
-                if not os.path.exists(self.working_directory):
-                    os.mkdir(self.working_directory)
+                    self.working_directory = dt.datetime.today().strftime("%Y%m%d") + self.user
+                    if not os.path.exists(self.working_directory):
+                        os.mkdir(self.working_directory)
 
-                logging.debug("{} logged in".format(self.user))
+                    logging.debug("{} logged in".format(self.user))
 
 
-            command = self.consumeBuffer( self.readUntil(b'\n') )\
-                        .decode('utf-8')[:-1]\
-                        .split(' ', 3)
+                command = self.consumeBuffer( self.readUntil(b'\n') )\
+                            .decode('utf-8')[:-1]\
+                            .split(' ', 3)
 
-            # Parse commands
-            if command[0] == 'U':
-                filesize, filename = command[1:]
-                filesize = int(filesize)
+                # Parse commands
+                if command[0] == 'U':
+                    filename, filesize = command[1:]
+                    filesize = int(filesize)
 
-                if os.path.exists(os.path.join(self.working_directory, filename)):
-                    self.sendall(b'EXISTS')
-                    continue
+                    path = os.path.join(self.working_directory, filename)
+
+                    if os.path.exists(path):
+                        self.sendall(b'EXISTS\n')
+                        continue
+                    else:
+                        self.sendall(b'OK\n')
+                        with open(path, 'bw') as fd:
+                            self.recvLeast(filesize)
+                            fd.write(self.consumeBuffer(filesize))
+
+                        logging.info(f"{self.user} uploaded a file: {filename}")
+
+                elif command[0] == 'D':
+                    fname, date = command[1:]
+
+                    found = None
+                    for dirpath, _, filenames in os.walk(f"{date}{self.user}"):
+                        if fname in filenames:
+                            found = os.path.join(dirpath, fname)
+
+                    if found:
+                        filesize = os.stat(found).st_size
+                        self.sendall(f"{filesize}\n".encode('utf-8'))
+                        with open(found, 'rb') as fd:
+                            self.sendall(fd.read())
+                    else:
+                        self.sendall(b'NOTFOUND\n')
+
+                elif command[0] == 'L':
+                    date = command[1]
+
+                    filelist = None
+                    for _, _, filenames in os.walk(f"{date}{self.user}"):
+                        filelist = ", ".join(filenames) + "\n"
+                        self.sendall(filelist.encode('utf-8'))
+                        break
+
+                    if not filelist: self.sendall(b'NOTFOUND\n')
+
+                elif command[0] == 'H':
+                    self.sendall('''Students File Protocol commands usage:
+                    U - Upload a file
+                    D - Download a file
+                    L - List files in directory
+                    H - Show this help message
+                    Q - Disconnect from server, close client\n\n'''.encode('utf-8'))
+
+                elif command[0] == 'Q':
+                    self.sendall(b'GOODBYE\n')
+                    logging.info("Client has notified disconnection")
+                    break
+
                 else:
-                    with open(os.path.join(self.working_directory, filename), 'bw') as fd:
-                        recv_size = 0
-                        while recv_size < filesize:
-                            self.buffer = self.conn.recv(4096)
-                            recv_size = len(self.buffer)
+                    self.sendall(b'INVALID\n')
 
-                        fd.write(self.buffer)
-                    self.buffer.clear()
-
-
-            elif command[0] == 'D':
-                pass
-            elif command[0] == 'L':
-                pass
-            elif command[0] == 'H':
-                pass
-
-            elif command[0] == 'Q':
-                self.sendall(b'GOODBYE\n')
-                self.close()
-                logging.info("Client has notified disconnection")
-                break
-
-            else:
-                self.sendall(b'INVALID\n')
+        except socket.error:
+            logging.info("Connection reset")
 
         logging.info("Finished")
 
+    def recv(self, *args, **kwargs) -> bytes:
+        '''
+        Reimplemented recv with auto-check and close
+        '''
+        data = super().recv(*args, **kwargs)
+        if not data:
+            logging.warning("{} disconnected".format(self.user))
+            raise socket.error()
+        return data
+
+    def recvLeast(self, n):
+        received = 0
+        while received < n:
+            data = self.recv(4096)
+            self.buffer += data
+            received += len(data)
 
     #   Utility functions for socket buffer management
     def readUntil(self, char: bytes) -> int:
@@ -98,8 +144,8 @@ class SFPClientHandler(threading.Thread, socket.socket):
         '''
         str_end = -1
         while str_end == -1:
-            self.buffer += self.conn.recv(4096)
-            str_end = self.buffer.find(b'\n')
+            self.buffer += self.recv(4096)
+            str_end = self.buffer.find(char)
 
         return str_end
 
@@ -116,22 +162,6 @@ class SFPClientHandler(threading.Thread, socket.socket):
         del self.buffer[:n]
         return consumed
 
-    def recvleast(self, n):
-        received = 0
-        while received < n:
-            data = self.recv(4096)
-            self.buffer += data
-            received = len(data)
-
-    def recv(self, *args, **kwargs) -> bytes:
-        '''
-        Reimplemented recv with auto-check and close
-        '''
-        data = super().recv(*args, **kwargs)
-        if not data:
-            self.close()
-            logging.warning("{} disconnected".format(self.name))
-        return data
 
 
 def main(host, port):
@@ -139,34 +169,15 @@ def main(host, port):
     Front desk. Manages the registration of clients.
     :param host: host to bind the listening socket to
     :param port: port to listen on
-    :return:
     '''
 
+    logging.info(f"Starting server on port {port}")
 
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as fds:
-        fds.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)   # For debug purposes on UNIX
-        fds.bind((host, port))
-        fds.listen(5)
-
-        logging.info("Blocking-IO model + threading server started.")
-
-        clients = []
-
+    with socketserver.ThreadingTCPServer((host, port), SFPClientHandler) as server:
         try:
-            while True:
-                conn, addr = fds.accept()
-                logging.info("New client connected {}".format(conn.getpeername()))
-                t = SFPClientHandler(conn)
-                t.start()
-
-                clients.append(t)
-
+            server.serve_forever()
         except KeyboardInterrupt:
-            for cl in clients:
-                cl.close()  # Close socket, may fail some calls
-                cl.join()   # Join thread
-
-    logging.info("Closing")
+            logging.info("Exiting")
 
 
 if __name__ == '__main__':

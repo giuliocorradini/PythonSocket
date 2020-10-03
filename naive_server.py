@@ -36,6 +36,8 @@ class ThreadedRequestHandler(threading.Thread):
         self.conn: socket.socket = incoming_conn
         self.conn.setblocking(False)
 
+        self.buffer = bytearray()
+
         ThreadedRequestHandler._count += 1
 
     def protocolCommandHandler(self, command: str) -> str:
@@ -59,12 +61,14 @@ class ThreadedRequestHandler(threading.Thread):
     def run(self) -> None:
         while True:
             try:
-                data = self.conn.recv(2)    #command + LF
+                data = self.conn.recv(1024)
                 if not data: break
+                self.buffer += data
 
-                command = data.decode("ascii")
+                command = self.buffer[:1].decode("ascii")
+                del self.buffer[:2]
                 try:
-                    response = self.protocolCommandHandler(command[0])
+                    response = self.protocolCommandHandler(command)
                 except ValueError:
                     logging.error("Client {} sent an invalid command {}".format(self.conn.getpeername(), data))
                     response = "Invalid command"
