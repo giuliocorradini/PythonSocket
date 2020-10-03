@@ -3,6 +3,9 @@ import logging
 import argparse
 import sys
 import os
+import datetime
+
+__author__ = 'Giulio Corradini'
 
 class SFPClientHandler(socket.socket):
     def __init__(self, *args, **kwargs):
@@ -11,14 +14,42 @@ class SFPClientHandler(socket.socket):
         self.buffer = bytearray()
         self.user: str = None
 
-    def uploadFile(self, filename):
-        pass
+    def uploadFile(self, filename, filesize):
+        command = f"U {filename} {filesize}\n".encode('utf-8')
+        self.sendall(command)
 
-    def downloadFile(self, filename):
-        pass
+        can_tx = self.consumeBuffer(self.recvUntil(b'\n'))
+        if can_tx == b'OK\n':
+            with open(filename, 'rb') as fd:
+                self.sendall(fd.read())
+        else:
+            print("File exists")
 
-    def sendTextCommand(self, command: str) -> str:
-        pass
+    def downloadFile(self, filename, date):
+        command = f"D {filename} {date}\n".encode('utf-8')
+        self.sendall(command)
+
+        response = self.consumeBuffer(self.recvUntil(b'\n'))
+        if response == b'NOTFOUND\n':
+            print("File not found on server")
+            return
+
+        else:
+            filesize = int(response.decode('utf-8'))
+            self.recvLeast(filesize)
+            with open(filename, 'wb') as fd:
+                fd.write(self.consumeBuffer(filesize))
+            print(f"Received {filesize} bytes")
+
+    def sendTextCommand(self, command: str, payload: str = None) -> str:
+        command += f" {payload}\n"
+
+        self.sendall(command.encode('utf-8'))
+        if command[0] == 'H':
+            response = self.consumeBuffer(self.recvUntil(b'\n\n'))
+        else:
+            response = self.consumeBuffer(self.recvUntil(b'\n'))
+        return response.decode('utf-8')
 
 
     #   Utility functions for socket buffer management
@@ -31,7 +62,7 @@ class SFPClientHandler(socket.socket):
         str_end = -1
         while str_end == -1:
             self.buffer += self.recv(4096)
-            str_end = self.buffer.find(b'\n')
+            str_end = self.buffer.find(char)
 
         return str_end
 
@@ -48,12 +79,12 @@ class SFPClientHandler(socket.socket):
         del self.buffer[:n]
         return consumed
 
-    def recvleast(self, n):
+    def recvLeast(self, n):
         received = 0
         while received < n:
-            data = self.recv(4096)
+            data = self.recv(65536)
             self.buffer += data
-            received = len(data)
+            received += len(data)
 
     def recv(self, *args, **kwargs) -> bytes:
         '''
@@ -62,22 +93,11 @@ class SFPClientHandler(socket.socket):
         data = super().recv(*args, **kwargs)
         if not data:
             self.close()
-            logging.warning("{} disconnected".format(self.name))
             raise socket.error()
         return data
 
 def main(host, port):
     with SFPClientHandler(socket.AF_INET, socket.SOCK_STREAM) as s:
-        buffer = bytearray()
-        def feedBuffer(size: int):
-            received = 0
-            while received < size:
-                data = s.recv(1024)
-                if not data:
-                    break
-                else:
-                    buffer += data
-
 
         try:
             s.connect((host, port))
@@ -87,33 +107,56 @@ def main(host, port):
 
             while True:
                 command = input(">> ")
+
                 if command[0] == 'U':
                     filename = input("Enter filename: ")
                     if os.path.exists(filename):
                         filesize = os.stat(filename).st_size
+                    else:
+                        print("This file doesn't exist")
+                        continue
 
-                message = "U {} {}\n".format(filesize, os.path.split(filename)[-1])
-                s.sendall(message.encode('utf-8'))
+                    s.uploadFile(filename, filesize)
 
-                msg_size = s.recvUntil('\n')
-                can_tx = s.consumeBuffer(msg_size)[:-1]
-                if can_tx == 'OK':
-                    #Start transmitting file
-                    with open(filename, 'rb') as fd:
-                        s.sendall(bytes(fd.read()))
+                elif command[0] == 'D':
+                    dirname = input("What day did you upload the file?(yyyymmdd) ")
+                    if not dirname: dirname = datetime.datetime.now().strftime("%Y%m%d")
+                    filename = input("Enter filename: ")
+                    if os.path.exists(filename):
+                        overwrite = input("File exists. Overwrite?[y/n] ")
+                        if overwrite != 'y':
+                            print("File download aborted")
+                            continue
 
-        except socket.timeout as e:
-            logging.error(e)
+                    s.downloadFile(filename, dirname)
 
-        except ConnectionAbortedError:
+                elif command[0] == 'L':
+                    dirname = input("What day do you want to search for?(yyyymmdd) ")
+                    if not dirname: dirname = datetime.datetime.now().strftime("%Y%m%d")
+                    print(s.sendTextCommand('L', dirname))
+
+                elif command[0] == 'Q':
+                    print(s.sendTextCommand('Q'))
+                    break
+
+                else:
+                    print(s.sendTextCommand(command[0]))
+
+        except KeyboardInterrupt:
+            logging.info("Disconnecting")
+
+        except ConnectionResetError:
             logging.info("Server forced a disconnection")
 
-        s.close()
+        logging.info("Closing connection")
+
 
 if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO)
+
     parser = argparse.ArgumentParser()
-    parser.add_argument("-host", metavar="host", type=str, default='localhost', required=False)
-    parser.add_argument("-port", metavar="port", type=int, default=9999, required=False)
+    parser.add_argument("--host", metavar="host", type=str, default='localhost', required=False)
+    parser.add_argument("--port", metavar="port", type=int, default=9999, required=False)
 
     args = parser.parse_args(sys.argv[1:])
 
