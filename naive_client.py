@@ -22,12 +22,16 @@ def main(host, port):
         except ConnectionAbortedError:
             logging.info("Server forced a disconnection")
 
+        except KeyboardInterrupt:
+            logging.info("Goodbye")
+
         s.close()
 
 if __name__ == '__main__':
+    logging.basicConfig(level=logging.DEBUG)
     parser = argparse.ArgumentParser()
-    parser.add_argument("-host", metavar="host", type=str, default='localhost', required=False)
-    parser.add_argument("-port", metavar="port", type=int, default=9999, required=False)
+    parser.add_argument("--host", metavar="host", type=str, default='localhost', required=False)
+    parser.add_argument("--port", metavar="port", type=int, default=9999, required=False)
 
     args = parser.parse_args(sys.argv[1:])
 

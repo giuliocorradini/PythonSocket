@@ -10,11 +10,9 @@ Protocol is defined in README.md of this directory.
 import socket
 import socketserver
 import os
-import glob
 import logging
 import argparse
 import sys
-import threading
 import datetime as dt
 
 __author__ = 'Giulio Corradini'
