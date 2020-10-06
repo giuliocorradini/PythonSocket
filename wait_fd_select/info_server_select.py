@@ -16,7 +16,7 @@ import argparse
 import logging
 import socket
 from select import select
-from typing import List, Set
+from typing import Set
 import threading
 
 quit_on_idle = False
@@ -33,7 +33,6 @@ class ClientSession(socket.socket):
 
         self.write_buffer = bytearray()
         self.read_buffer = bytearray()
-        #self.to_read: int = 0
 
         logging.info(f"{self.getpeername()} connected as client #{self.session_count}")
 
@@ -57,10 +56,6 @@ class ClientSession(socket.socket):
             return "Not recognized."
 
     def processData(self):
-        #if not self.read_buffer:
-        #    self.recvLeast(1)
-        #
-        #else:
         command = self.read_buffer[:1].decode()
         del self.read_buffer[:1]
         response = self.processCommand(command) + '\n'
@@ -68,13 +63,9 @@ class ClientSession(socket.socket):
 
         return
 
-    #def recvLeast(self, bufsize: int):
-    #    self.to_read += bufsize
-
     def recv(self, bufsize: int, flags: int = 0) -> bytes:
         data = super().recv(bufsize, flags)
         self.read_buffer += data
-        #self.to_read -= len(data)
         return data
 
     def sendall(self, data: bytes, flags: int = ...) -> None:
@@ -93,7 +84,7 @@ def main(host, port):
         s.listen(5)
 
         active_clients = [s]
-        active_sockets = [] # you need to mantain a direct reference to sockets
+        socket_history = [] # Socket direct ref. needed
         closed_clients: Set[ClientSession] = set()
 
         logging.info("Non-blocking select server started")
@@ -109,7 +100,7 @@ def main(host, port):
                 for r in readable:
                     if r is s:
                         conn, addr = r.accept()
-                        active_sockets.append(conn)
+                        socket_history.append(conn)
                         active_clients.append(ClientSession(conn))
 
                     else:
@@ -117,7 +108,7 @@ def main(host, port):
                         if not data: closed_clients.add(r)
                         else:
                             while r.read_buffer:
-                                r.processData() #consumo tutti i comandi
+                                r.processData() # Process all available data
 
                 for w in writable:
                     if w.write_buffer:

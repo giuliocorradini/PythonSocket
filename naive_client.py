@@ -14,7 +14,7 @@ def main(host, port):
 
                 response = s.recv(1024)
                 if not response: break
-                print(response.decode('ascii'))
+                print(response.decode('ascii'), end='')
 
         except socket.timeout as e:
             logging.error(e)
