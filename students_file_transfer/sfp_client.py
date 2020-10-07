@@ -22,8 +22,10 @@ class SFPClientHandler(socket.socket):
         if can_tx == b'OK\n':
             with open(filename, 'rb') as fd:
                 self.sendall(fd.read())
-        else:
+        elif can_tx == b'EXISTS\n':
             print("File exists")
+        else:
+            print("Server error")
 
     def downloadFile(self, filename, date):
         command = f"D {filename} {date}\n".encode('utf-8')
@@ -32,7 +34,9 @@ class SFPClientHandler(socket.socket):
         response = self.consumeBuffer(self.recvUntil(b'\n'))
         if response == b'NOTFOUND\n':
             print("File not found on server")
-            return
+
+        elif response == b'ERROR\n':
+            print("Server error")
 
         else:
             filesize = int(response.decode('utf-8'))
@@ -51,6 +55,13 @@ class SFPClientHandler(socket.socket):
             response = self.consumeBuffer(self.recvUntil(b'\n'))
         return response.decode('utf-8')
 
+    def auth(self, user: str) -> bool:
+        self.sendall(user.encode('utf-8') + b'\n')
+        auth_result = self.consumeBuffer(self.recvUntil(b'\n'))
+        if auth_result == b'OK\n':
+            return True
+        else:
+            return False
 
     #   Utility functions for socket buffer management
     def recvUntil(self, char: bytes) -> int:
@@ -103,7 +114,9 @@ def main(host, port):
             s.connect((host, port))
 
             user = input("What's your name?")
-            s.sendall(user.encode('utf-8')+b'\n')
+            if not s.auth(user):
+                print("User authentication error")
+                raise KeyboardInterrupt()
 
             while True:
                 command = input(">> ")

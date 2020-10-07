@@ -36,8 +36,20 @@ class SFPClientHandler(socketserver.BaseRequestHandler, socket.socket):
             while True:
                 if self.user == None:   #Read authentication string
                     logging.debug("User requests auth")
-                    auth_str_end = self.readUntil(b'\n')
-                    self.user = self.consumeBuffer(auth_str_end).decode('utf-8').rstrip('\n')
+
+                    user_auth_str = self.consumeBuffer(self.readUntil(b'\n'))\
+                                        .decode('utf-8')\
+                                        .rstrip('\n')
+                    sanitized = self.sanitizeInput(user_auth_str)   # Since a user might inject a malicious
+                                                                    # path as its username (e.g. ../)
+
+                    if not sanitized:
+                        self.sendall(b'ERROR\n')
+                        logging.warning("Sent an invalid sequence as login name. Forcing disconnection")
+                        break
+                    else:
+                        self.sendall(b'OK\n')
+                    self.user = sanitized
 
                     self.working_directory = dt.datetime.today().strftime("%Y%m%d") + self.user
                     if not os.path.exists(self.working_directory):
@@ -53,7 +65,14 @@ class SFPClientHandler(socketserver.BaseRequestHandler, socket.socket):
                 # Parse commands
                 if command[0] == 'U':
                     filename, filesize = command[1:]
-                    filesize = int(filesize)
+
+                    try:
+                        filesize = int(filesize)
+                    except ValueError:
+                        self.sendall(b'ERROR\n')
+                        continue
+
+                    filename = self.sanitizeInput(filename)
 
                     path = os.path.join(self.working_directory, filename)
 
@@ -70,6 +89,10 @@ class SFPClientHandler(socketserver.BaseRequestHandler, socket.socket):
 
                 elif command[0] == 'D':
                     fname, date = command[1:]
+                    fname = self.sanitizeInput(fname)
+                    if not self.sanitizeInput(date, type="date"):
+                        self.sendall(b'ERROR\n')
+                        continue
 
                     found = None
                     for dirpath, _, filenames in os.walk(f"{date}{self.user}"):
@@ -86,6 +109,9 @@ class SFPClientHandler(socketserver.BaseRequestHandler, socket.socket):
 
                 elif command[0] == 'L':
                     date = command[1]
+                    if not self.sanitizeInput(date, type="date"):
+                        self.sendall(b'ERROR\n')
+                        continue
 
                     filelist = None
                     for _, _, filenames in os.walk(f"{date}{self.user}"):
@@ -115,6 +141,24 @@ class SFPClientHandler(socketserver.BaseRequestHandler, socket.socket):
             logging.info("Connection reset")
 
         logging.info("Finished")
+
+    def sanitizeInput(self, user_input: str, type = "str"):
+        '''
+        Sanitizes user input for path and dates.
+        :param input: string to santize.
+        :param type: "str" or "date", defines the sanity check method.
+        :return: input without paths for str.
+            True/False if date is valid.
+        '''
+        if type == "str":
+            head, tail = os.path.split(user_input)
+            return tail.strip().strip('.')  # Remove leading/trailing spaces and dots
+        elif type == "date":
+            try:
+                dt.datetime.strptime(user_input, "%Y%m%d")
+                return True
+            except ValueError:
+                return False
 
     def recv(self, *args, **kwargs) -> bytes:
         '''
