@@ -23,6 +23,9 @@ Server and client are constrained to agree on it.
 It then creates a directory with the current day
 and the student's name using the following format:
 `yyyymmdd_surname_name`.
+If user inputs an invalid name, an error message is returned
+(`ERROR\n`) otherwise `OK\n` is returned and the client might
+continue with its operations.
 
 3. The server listens for commands from the client
 and responds appropriately.
@@ -61,7 +64,7 @@ Given the stateful nature of the protocol, each response is
 related to a sent command.
 
 Every message is separated from one another using a UNIX
-new line character `LF` or utf-8/ASCII `0x0a`.
+new line character `\n` or utf-8/ASCII `0x0a` `LF`.
 
 **Client commands list**
 
@@ -71,4 +74,8 @@ new line character `LF` or utf-8/ASCII `0x0a`.
 | D    | Download file | File name *space* Dirname   | `NOTFOUND` if file doesn't exists<br>`File size` if file exists                     |
 | L    | List files    | Directory name to list      | Comma-separated list of file in student's disk space                                |
 | H    | Show help     |                             | Help information about commands<br><br>Double `LF` terminated                       |
-| Q    | Exit          |                             | GOOBYE *then close the TCP connection and quits*                                    |
+| Q    | Exit          |                             | GOODBYE *then close the TCP connection and quits*                                   |
+
+If a server-related error occurs during any process, a message will be sent to
+the client: `ERROR`. The client may clean its outgoing buffer, any data will
+be treated as a new command by the server.
